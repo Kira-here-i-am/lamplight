@@ -5,3 +5,6 @@ build/
 frames/
 frames_clip/
 out/
+
+# Claude Code session config (local to this machine)
+.claude/
