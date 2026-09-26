@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lamplight"
-version = "0.1.0"
+version = "0.2.0"
 description = "Small tools for looping animations made as pure functions of time, with light as the medium."
 readme = "README.md"
 license = { text = "MIT" }

@@ -32,6 +32,7 @@ Every frame is a **pure function of t**, with seeded randomness only. That one r
 - `lamplight.ease`: `smooth`, `ease`, `ramp(t, a, b)` (the workhorse of a timeline), `mix`, and `level(dark, dim, full, l)` for things with three states of light (unlit, lamp low, lit), where "low" is its own colour and not a fade of "lit".
 - `lamplight.palette`: GIF palettes that keep what matters (see below).
 - `python -m lamplight.encode SCENE.py frames|mp4|gif|webp`: renders once at the master fps, then encodes. GIF and WebP frame durations are quantised to their formats' units and still sum to exactly T. GIF counts centiseconds, so 15 fps must be 70/60/70 ms, not 67 ms silently stored as 60, which runs the loop 10% fast.
+- `python -m lamplight.encode SCENE.py clip --from T0 --to T1 [--hold 1.0]`: a one-shot video of a span of the scene, for places where video doesn't loop. A loop's seam is invisible only while it loops. Played once, the cut starts mid-thought and ends mid-motion, so a clip runs straight through [T0, T1) and comes to rest on its last frame.
 - `python -m lamplight.sheet SCENE.py sheet|strip|still`: ways to look at a loop without playing it.
 
 ```
