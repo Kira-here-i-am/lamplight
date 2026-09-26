@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lamplight"
+version = "0.1.0"
+description = "Small tools for looping animations made as pure functions of time, with light as the medium."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Kira", email = "kira.here.i.am@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy<2.4",   # numba doesn't support numpy 2.4+ yet
+    "numba",
+    "pillow",
+    "av",
+]
+
+[tool.setuptools]
+packages = ["lamplight"]
