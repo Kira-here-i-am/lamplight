@@ -30,6 +30,11 @@ from .post import to_srgb8
 _worker = {}
 
 
+def _workers(mod):
+    """A scene may cap its worker processes (WORKERS = n), e.g. one that opens a GPU device in each."""
+    return getattr(mod, 'WORKERS', None) or max(1, os.cpu_count() - 2)
+
+
 def _init(path, master_fps, sub='frames', times=None):
     mod = scene.load(path)
     _worker.update(mod=mod, obj=mod.make(), fps=master_fps, dir=os.path.join(os.path.dirname(path), sub),
@@ -55,7 +60,7 @@ def render_frames(path, master_fps=30):
     for f in glob.glob(os.path.join(fr, '*.png')):
         os.remove(f)
     n = round(mod.T * master_fps)
-    with ProcessPoolExecutor(max_workers=max(1, os.cpu_count() - 2), initializer=_init,
+    with ProcessPoolExecutor(max_workers=_workers(mod), initializer=_init,
                              initargs=(path, master_fps)) as ex:
         for k, _ in enumerate(ex.map(_render, range(n), chunksize=8)):
             if k % 120 == 0:
@@ -73,7 +78,7 @@ def clip(path, t0, t1, hold=1.0, fps=30, crf=18):
         os.remove(f)
     n = int(round((t1 - t0) * fps))
     times = [t0 + i / fps for i in range(n)]
-    with ProcessPoolExecutor(max_workers=max(1, os.cpu_count() - 2), initializer=_init,
+    with ProcessPoolExecutor(max_workers=_workers(scene.load(path)), initializer=_init,
                              initargs=(path, fps, 'frames_clip', times)) as ex:
         for k, _ in enumerate(ex.map(_render, range(n), chunksize=8)):
             if k % 120 == 0:
