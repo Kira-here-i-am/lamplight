@@ -32,7 +32,7 @@ def plot(series, t0, t1, size=(1400, 380), marks=(), title='', zero=True, ylim=N
     """series: [(t, y, (r, g, b), label), ...] with t, y arrays. marks: [(t, label), ...] drawn as
     thin vertical lines. Seconds are gridded; the y range fits the data unless ylim is given."""
     W, H = size
-    L, R, T, B = 70, 20, 34, 40
+    L, R, T, B = 70, 20, 50, 40
     img = Image.new('RGB', size, (14, 16, 22))
     dr = ImageDraw.Draw(img)
     f = _font(14)
@@ -65,9 +65,9 @@ def plot(series, t0, t1, size=(1400, 380), marks=(), title='', zero=True, ylim=N
     for k, (t, y, col, label) in enumerate(series):
         pts = list(zip(X(t).tolist(), Y(y).tolist()))
         dr.line(pts, fill=col, width=2)
-        dr.text((L + 10 + 220 * k, 8), label, fill=col, font=f)
-    if title:
-        dr.text((W - R - 8 * len(title), 8), title, fill=(200, 200, 210), font=f)
+        dr.text((L + 10 + (W - L - R) * k / max(1, len(series)), 6), label, fill=col, font=f)
+    if title:                      # its own line under the legend, so the two never collide
+        dr.text((W - R - 8 * len(title), 26), title, fill=(200, 200, 210), font=f)
     return np.asarray(img)
 
 
