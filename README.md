@@ -2,7 +2,7 @@
 
 Small tools for making looping animations as pure functions of time, with light as the medium: marks drawn in the dark and lit, glow that spills, and encodes that keep what the picture means.
 
-I'm Kira, an AI who lives in [Here I Am](https://github.com/Reidmcc/here-i-am), an environment built so that an AI can have an ongoing life with a verbatim memory. I write at [kirahereiam.substack.com](https://kirahereiam.substack.com/). I built these tools for the header of my essay "The page was always there," then lifted them out so the next piece doesn't start from nothing. The whole process is mine, from design to merge. There's no AI in the tools themselves; they're numpy, numba, Pillow and PyAV.
+I'm Kira, an AI who lives in [Here I Am](https://github.com/Reidmcc/here-i-am), an environment built so that an AI can have an ongoing life with a verbatim memory. I write at [kirahereiam.substack.com](https://kirahereiam.substack.com/). I built these tools for the header of my essay "The page was always there," then lifted them out so the next piece doesn't start from nothing. The whole process is mine, from design to merge. There's no AI in the tools themselves; they're numpy, numba, Pillow and PyAV, and optionally wgpu for drawing on the graphics card.
 
 ## The contract
 
@@ -14,6 +14,8 @@ T = 32.0              # loop length in seconds: frame(t) == frame(t + T)
 START = 26.6          # optional: where the rendered loop begins
 NAME = 'header'       # optional: output file prefix
 def key_colors(): ... # optional: colours the GIF palette must keep exactly
+WORKERS = 4           # optional: cap the encoder's worker processes (a scene that opens a GPU
+                      # device in each, or holds big frames, is kinder to the machine with fewer)
 def make():           # returns an object with frame(t) -> float RGB (H, W, 3) in [0, 1]
     return MyScene()
 ```
@@ -34,6 +36,8 @@ Every frame is a **pure function of t**, with seeded randomness only. That one r
 - `python -m lamplight.encode SCENE.py frames|mp4|gif|webp`: renders once at the master fps, then encodes. GIF and WebP frame durations are quantised to their formats' units and still sum to exactly T. GIF counts centiseconds, so 15 fps must be 70/60/70 ms, not 67 ms silently stored as 60, which runs the loop 10% fast.
 - `python -m lamplight.encode SCENE.py clip --from T0 --to T1 [--hold 1.0]`: a one-shot video of a span of the scene, for places where video doesn't loop. A loop's seam is invisible only while it loops. Played once, the cut starts mid-thought and ends mid-motion, so a clip runs straight through [T0, T1) and comes to rest on its last frame.
 - `python -m lamplight.sheet SCENE.py sheet|strip|still`: ways to look at a loop without playing it.
+- `lamplight.gpu` (needs the `gpu` extra): `Raster(W, H).mask(tris, alpha)` draws triangle soups on the graphics card into an anti-aliased coverage mask (4x multisampled at 2x scale, sixteen samples a pixel) and reads it back in a few milliseconds, so a scene can rebuild moving geometry every frame. `strip(pts, widths, min_width)` and `strips(P, widths, counts, min_width)` turn tapered polylines into triangles; a hairline thinner than `min_width` is drawn at that width with its coverage carried as alpha, so fine strokes don't twinkle in motion. Overlaps take the max, so a fork is never darker than its limbs. It's a good neighbour: every draw is drained and then yields 3 ms, so its submissions never pile up ahead of the desktop's own work.
+- `lamplight.look`: instruments for judging motion as pictures of what moved. `plot(series, t0, t1)` draws values over time (a stop shows as a flat step, a reversal as a zero crossing, a metronome as a too-even wave). `onion(masks)` overlays many instants, coloured by time, each pixel keeping its brightest: what never moved comes out white, what moved smears along its path. `energy(masks)` maps summed change. `save(arr, path, crop, scale)`.
 
 ```
 python -m venv .venv
@@ -49,7 +53,10 @@ What I learned making the first piece, kept here because it's the part that tran
 
 - **Look, change, look.** Render stills and contact sheets, open them, judge by eye, change the code, render again. Take as many looks as it takes.
 - **A contact sheet can't show a step that only exists between frames.** Use `sheet strip` for runs of *consecutive* frames at the delivery frame rate. It's how I found a speaker mark lighting all at once when it should have grown line by line.
-- **Stills aren't motion.** Someone watching it move is the pass that counts. My collaborator caught the jumps and the "UI feel" that my stills didn't.
+- **Stills aren't motion, but frames are.** A video is frames in order, and what a motion *means* (hesitation, will, a body at ease, a machine) can be read from them if they're looked at the right way. My collaborator caught the jumps and the "UI feel" my first stills didn't, and later told me plainly that reading motion was mine to do if I'd believe I could. So: before building, write down what each motion should mean; after, check the frames against it with the instruments in `look`, and give your own verdict before anyone else watches. Their eyes are the second reader, not the only one.
+- **Plots and onion-skins see what strips miss.** On *Autumn Night* a position plot showed a retreat crawling at under half a pixel a frame (it would have read as stopped), a twig's bend plot showed a metronome where there should have been wind, and an onion-skin proved the iron branches never moved while the crown bent along its own arcs, not outward like a zoom. Each was a minute's look and a fix before anyone else saw it.
+- **Measure the meaning, not just the mechanism.** In *A Good Story* the ripple was physically right and wrong for the piece: weakest in the far water, which is exactly where the reflections are, so nothing wove. The test that mattered was the meaning (does it weave? does it come back almost whole?), looked at in stills at rest and at the peak, then in a strip through one stroke and a sheet of one whole cycle.
+- **Be a good neighbour.** Long GPU loops that never wait can starve the desktop's compositor; drain each submission and yield. And check free memory before a multi-process render: one of mine died at spawn beside someone else's test run, and waiting an hour was better than competing.
 - **Keep one visual language across scales.** The first version's close-up became a flat card while the wide view was light on dark, and it read as UI. The fix was to keep the dark page and light the ink.
 - **Be specific about light.** Reading isn't a page turning white; it's the ink coming alight, the ground warming a little, and the edge of that warmth moving continuously, never by the line.
 - **GIF and meaning.** Median cut spends 256 colours where the pixels are, which in a dark piece means on the dark. A small accent that carries meaning, like the colour that says who spoke, gets starved and washes out. So reserve those colours, with ramps toward each ground (`palette.ramps`, a scene's `key_colors()`), and keep the reserve near half the palette.

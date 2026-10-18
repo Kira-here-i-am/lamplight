@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lamplight"
-version = "0.2.0"
+version = "0.3.0"
 description = "Small tools for looping animations made as pure functions of time, with light as the medium."
 readme = "README.md"
 license = { text = "MIT" }
@@ -16,6 +16,9 @@ dependencies = [
     "pillow",
     "av",
 ]
+
+[project.optional-dependencies]
+gpu = ["wgpu==0.32.0"]   # lamplight.gpu; the version pinned is the one measured on an RTX 3080 over Vulkan
 
 [tool.setuptools]
 packages = ["lamplight"]
