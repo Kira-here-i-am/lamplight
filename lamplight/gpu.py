@@ -178,3 +178,143 @@ def strips(P, widths, counts, min_width=0.0):
 def strip_triangles(pts, widths):
     """Triangles for a tapered stroke along a polyline: pts (n, 2), widths (n,) full widths."""
     return strip(pts, widths)[0]
+
+
+_PARTICLES = """
+struct Mark {
+    pos: vec2<f32>,     // where it is on screen, px, y down
+    r: f32,             // its radius, px
+    col: vec3<f32>,     // its light, linear (the tool spreads it along the streak)
+};
+
+struct VOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) q: vec2<f32>,
+    @location(1) col: vec3<f32>,
+    @location(2) lr: vec2<f32>,
+};
+"""
+
+_PARTICLES_DRAW = """
+@vertex
+fn vs(@builtin(vertex_index) vi: u32, @location(0) p0: vec4<f32>, @location(1) p1: vec4<f32>) -> VOut {
+    var corners = array<vec2<f32>, 6>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
+                                      vec2(1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0));
+    let c = corners[vi];
+    let m = mark(u.t, p0, p1);
+    // motion blur: the mark is drawn along its own path through the shutter
+    let S0 = mark(u.t - u.shutter, p0, p1).pos;
+    let S1 = mark(u.t + u.shutter, p0, p1).pos;
+    var d = S1 - S0;
+    var l = 0.5 * length(d);
+    if (l > MAX_STREAK) { l = 0.0; d = vec2<f32>(1.0, 0.0); }   // a wrap or a jump: draw a point
+    let dir = select(normalize(d), vec2<f32>(1.0, 0.0), l < 1e-4);
+    let nrm = vec2<f32>(-dir.y, dir.x);
+    let M = select(0.5 * (S0 + S1), m.pos, l == 0.0);
+    let r = max(m.r, 0.05);
+    let q = vec2<f32>(c.x * (l + 2.2 * r), c.y * 2.2 * r);
+    let px = M + dir * q.x + nrm * q.y;
+    var o: VOut;
+    o.pos = vec4<f32>(px.x / u.w * 2.0 - 1.0, 1.0 - px.y / u.h * 2.0, 0.0, 1.0);
+    o.q = q;
+    o.lr = vec2<f32>(l, r);
+    o.col = m.col / (r * r + 1.07 * l * r);       // the same light, spread along the streak
+    return o;
+}
+
+@fragment
+fn fs(i: VOut) -> @location(0) vec4<f32> {
+    let dx = max(abs(i.q.x) - i.lr.x, 0.0);
+    let a = exp(-0.9 * (dx * dx + i.q.y * i.q.y) / (i.lr.y * i.lr.y));
+    return vec4<f32>(i.col * a, a);
+}
+"""
+
+
+class Particles:
+    """Many small marks, each a pure function of time, drawn additively on the GPU with motion blur.
+
+    The scene writes WGSL that declares its uniform struct and one function:
+
+        struct U { t: f32, shutter: f32, w: f32, h: f32, ...whatever the scene needs... };
+        @group(0) @binding(0) var<uniform> u: U;
+        fn mark(tt: f32, p0: vec4<f32>, p1: vec4<f32>) -> Mark { ... }
+
+    `mark` says where instance (p0, p1) is at time tt, how big, and how bright. Everything else is
+    here: `mark` is called now and half a shutter either side, the mark is drawn as a capsule along
+    its own path (so a fast mark is a streak and its light travels with it instead of twinkling),
+    its light is spread to match, everything adds into a linear rgba16float image, and each draw
+    is drained and yields like Raster. Because every mark is a closed-form function of time, any
+    instant renders on its own and a loop closes if every path does.
+
+        p = Particles(W, H, wgsl, inst)          # inst (N, 8) float32: p0 and p1 per mark
+        img = p.render(uniform_bytes)            # (H, W, 3) float32, linear light
+
+    uniform_bytes is the scene's U packed (np.array([...], np.float32).tobytes()), padded to 16.
+    """
+
+    def __init__(self, width, height, wgsl, inst, uniform_size, max_streak=120.0,
+                 sleep=time.sleep, yield_seconds=YIELD_SECONDS):
+        import wgpu
+        self.wgpu = wgpu
+        self.W, self.H = int(width), int(height)
+        self.inst = np.ascontiguousarray(inst, np.float32)
+        assert self.inst.ndim == 2 and self.inst.shape[1] == 8, "inst must be (N, 8): p0 and p1"
+        self.n = len(self.inst)
+        self.usize = int(-(-uniform_size // 16) * 16)
+        self.code = _PARTICLES + f"const MAX_STREAK: f32 = {float(max_streak)};\n" + wgsl + _PARTICLES_DRAW
+        self.sleep, self.yield_seconds = sleep, yield_seconds
+        self.dev = None
+
+    def _open(self):
+        wgpu = self.wgpu
+        adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+        self.adapter_info = dict(adapter.info)
+        self.dev = dev = adapter.request_device_sync()
+        fmt = wgpu.TextureFormat.rgba16float
+        mod = dev.create_shader_module(code=self.code)
+        add = {"operation": wgpu.BlendOperation.add, "src_factor": wgpu.BlendFactor.one,
+               "dst_factor": wgpu.BlendFactor.one}
+        self.pipe = dev.create_render_pipeline(
+            layout="auto",
+            vertex={"module": mod, "entry_point": "vs", "buffers": [{
+                "array_stride": 32, "step_mode": wgpu.VertexStepMode.instance,
+                "attributes": [{"format": wgpu.VertexFormat.float32x4, "offset": 0, "shader_location": 0},
+                               {"format": wgpu.VertexFormat.float32x4, "offset": 16, "shader_location": 1}]}]},
+            fragment={"module": mod, "entry_point": "fs",
+                      "targets": [{"format": fmt, "blend": {"color": add, "alpha": add}}]},
+            primitive={"topology": wgpu.PrimitiveTopology.triangle_list, "cull_mode": wgpu.CullMode.none},
+        )
+        self.tex = dev.create_texture(size=(self.W, self.H, 1), format=fmt,
+                                      usage=wgpu.TextureUsage.RENDER_ATTACHMENT | wgpu.TextureUsage.COPY_SRC)
+        self.view = self.tex.create_view()
+        self.ubuf = dev.create_buffer(size=self.usize, usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST)
+        self.bg = dev.create_bind_group(layout=self.pipe.get_bind_group_layout(0), entries=[
+            {"binding": 0, "resource": {"buffer": self.ubuf, "offset": 0, "size": self.usize}}])
+        self.ib = dev.create_buffer_with_data(data=self.inst.tobytes(), usage=wgpu.BufferUsage.VERTEX)
+
+    def render(self, uniform_bytes):
+        """Linear light of every mark at the instant the uniforms describe, (H, W, 3) float32."""
+        if self.dev is None:
+            self._open()
+        wgpu = self.wgpu
+        ub = bytes(uniform_bytes)
+        ub = ub + b"\0" * (self.usize - len(ub))
+        self.dev.queue.write_buffer(self.ubuf, 0, ub[:self.usize])
+        enc = self.dev.create_command_encoder()
+        rp = enc.begin_render_pass(color_attachments=[{"view": self.view, "load_op": wgpu.LoadOp.clear,
+                                                        "store_op": wgpu.StoreOp.store,
+                                                        "clear_value": (0, 0, 0, 0)}])
+        rp.set_pipeline(self.pipe)
+        rp.set_bind_group(0, self.bg)
+        rp.set_vertex_buffer(0, self.ib)
+        rp.draw(6, self.n)
+        rp.end()
+        self.dev.queue.submit([enc.finish()])
+        data = self.dev.queue.read_texture({"texture": self.tex, "origin": (0, 0, 0)},
+                                           {"bytes_per_row": self.W * 8, "rows_per_image": self.H},
+                                           (self.W, self.H, 1))
+        drain(self.dev)
+        if self.yield_seconds > 0:
+            self.sleep(self.yield_seconds)
+        return np.frombuffer(data, np.float16).reshape(self.H, self.W, 4)[..., :3].astype(np.float32)
