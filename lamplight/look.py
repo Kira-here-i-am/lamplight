@@ -12,8 +12,13 @@ A strip of frames shows where things are; these show how they move.
                             in concentric copies.
     energy(masks)           how much each pixel changed, summed over consecutive frames: the places
                             that moved, lit; the places that held, black.
+    kymo(frames, path)      brightness along a path against time, one row a frame: whatever travels
+                            along the path draws slanted lines, so direction and speed show at a
+                            glance (down and to the RIGHT: moving toward the path's end).
+    steps(frames)           the change into each frame, largest first, with WHERE it sits: a spike
+                            is judged by where it is, not only by how big.
 
-Each returns an RGB uint8 array; save it and look.
+Each picture returns an RGB uint8 array; save it and look. steps returns a list.
 """
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -98,6 +103,49 @@ def energy(masks, gain=4.0):
     e = np.clip(e * gain / max(1, len(masks) - 1), 0, 1)
     heat = np.stack([np.clip(3 * e, 0, 1), np.clip(3 * e - 1, 0, 1), np.clip(3 * e - 2, 0, 1)], -1)
     return (heat * 255).astype(np.uint8), e
+
+
+def _lum(f):
+    a = np.asarray(f, np.float32)
+    if a.dtype != np.uint8 and a.max() <= 1.5:
+        a = a * 255
+    return a[..., :3] @ np.array([0.3, 0.59, 0.11], np.float32) if a.ndim == 3 else a
+
+
+def kymo(frames, path, width=1):
+    """frames: images in order (uint8 RGB, or float 0..1). path: [(x, y), ...] pixel points in order
+    along something that may carry motion (a stream's centreline, a road, a branch). Each row is one
+    frame's brightness along the path, averaged over `width` pixels across x. Built to answer "which
+    way does this water flow" when frame differences and global optical flow were confounded by
+    reflections sliding across it; the slant answered at once."""
+    pts = np.asarray(path, int)
+    h = width // 2
+    rows = []
+    for f in frames:
+        L = _lum(f)
+        rows.append([L[y, max(0, x - h):x + h + 1].mean() for x, y in pts])
+    K = np.asarray(rows, np.float32)
+    K = (K - K.min()) / (K.max() - K.min() + 1e-9)
+    g = (K * 255).astype(np.uint8)
+    return np.stack([g, g, g], -1)
+
+
+def steps(frames, thresh=20, top=8):
+    """The mean |change| (0..255) into each frame, with how many pixels changed by more than `thresh`
+    and the centre of where they are. Returns the `top` largest as [(i, mean, n_big, (y, x) or None)],
+    plus the median of all steps: [(...), ...], median. Run it on the decoded video AND on the rendered
+    frames: a step in the file but not the frames is the encoder's; in both, it's the scene's."""
+    out, prev = [], None
+    for i, f in enumerate(frames):
+        L = _lum(f)
+        if prev is not None:
+            d = np.abs(L - prev)
+            big = d > thresh
+            ys, xs = np.nonzero(big)
+            out.append((i, float(d.mean()), int(big.sum()), (int(ys.mean()), int(xs.mean())) if ys.size else None))
+        prev = L
+    med = float(np.median([o[1] for o in out])) if out else 0.0
+    return sorted(out, key=lambda o: -o[1])[:top], med
 
 
 def save(arr, path, crop=None, scale=1):

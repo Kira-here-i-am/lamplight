@@ -91,7 +91,7 @@ def clip(path, t0, t1, hold=1.0, fps=30, crf=18):
         im0 = Image.open(files[0])
         st.width, st.height = im0.size
         st.pix_fmt = 'yuv420p'
-        st.options = {'crf': str(crf), 'preset': 'slow', 'tune': 'animation'}
+        st.options = dict(X264, crf=str(crf))
         for f in files:
             for p in st.encode(av.VideoFrame.from_image(Image.open(f).convert('RGB'))):
                 c.mux(p)
@@ -123,6 +123,15 @@ def load_scaled(files, width):
     return ims
 
 
+# Periodic intra refresh instead of keyframes. With a keyframe every 250 frames, fine moving texture
+# (grass, water) softens over the predicted frames and snaps sharp at each keyframe: a frame-wide pop
+# every 8 seconds that isn't in the rendered frames at all (measured on On Its Circuits: ~2/255 against
+# an ordinary step of 0.35; crf 18, tune grain, ipratio and mbtree off all left 1.3-2.0). Refresh
+# spreads it through the frames: the largest step fell to 1.11, a gust, for 5% more bytes. One pop
+# stays at a loop's wrap, because the first frame has to be a keyframe.
+X264 = {'preset': 'slow', 'tune': 'animation', 'x264-params': 'intra-refresh=1'}
+
+
 def _out(path, suffix):
     mod = scene.load(path)
     d = os.path.join(os.path.dirname(os.path.abspath(path)), 'out')
@@ -139,7 +148,7 @@ def mp4(path, fps=30, crf=18, master_fps=30):
         im0 = Image.open(files[0])
         st.width, st.height = im0.size
         st.pix_fmt = 'yuv420p'
-        st.options = {'crf': str(crf), 'preset': 'slow', 'tune': 'animation'}
+        st.options = dict(X264, crf=str(crf))
         for f in files:
             for p in st.encode(av.VideoFrame.from_image(Image.open(f).convert('RGB'))):
                 c.mux(p)
